@@ -21,23 +21,31 @@ const io = new Server(server, {
   },
 });
 
-let gameState: GameState = {
-  status: "waiting",
-  deck: [],
-  publicCard: null,
-  players: [],
-  currentTurn: null,
-  roundTimer: null,
-  awardingInfo: null,
-  pot: 0,
-  currentBet: 0,
-  bettingTurnId: null,
+const gameRooms = new Map<string, GameState>();
+const playerRooms = new Map<string, string>();
+
+const getGameState = (roomId: string) => {
+  if (!gameRooms.has(roomId)) {
+    gameRooms.set(roomId, {
+      status: "waiting",
+      deck: [],
+      publicCard: null,
+      players: [],
+      currentTurn: null,
+      roundTimer: null,
+      awardingInfo: null,
+      pot: 0,
+      currentBet: 0,
+      bettingTurnId: null,
+    });
+  }
+  return gameRooms.get(roomId)!;
 };
 
 const MAX_PLAYERS = 4;
 
-const resetGame = () => {
-  gameState = {
+const resetGame = (roomId: string) => {
+  gameRooms.set(roomId, {
     status: "waiting",
     deck: [],
     publicCard: null,
@@ -48,11 +56,12 @@ const resetGame = () => {
     pot: 0,
     currentBet: 0,
     bettingTurnId: null,
-  };
-  sendStateUpdate();
+  });
+  sendStateUpdate(roomId);
 };
 
-const sendStateUpdate = () => {
+const sendStateUpdate = (roomId: string) => {
+  const gameState = getGameState(roomId);
   // Hide other players' cards, only send length
   const sanitizedPlayers = gameState.players.map((p) => ({
     id: p.id,
@@ -80,7 +89,7 @@ const sendStateUpdate = () => {
     bettingTurnId: gameState.bettingTurnId,
   };
 
-  io.emit("stateUpdate", publicState);
+  io.to(roomId).emit("stateUpdate", publicState);
 
   // Send private state to each player
   gameState.players.forEach((p) => {
@@ -92,11 +101,12 @@ const sendStateUpdate = () => {
   });
 };
 
-const startBettingRound = () => {
+const startBettingRound = (roomId: string) => {
+  const gameState = getGameState(roomId);
   const activePlayers = gameState.players.filter((p) => !p.isStanding);
   if (activePlayers.length < 2) {
     gameState.status = "deciding";
-    sendStateUpdate();
+    sendStateUpdate(roomId);
     return;
   }
 
@@ -111,10 +121,11 @@ const startBettingRound = () => {
     }
   });
 
-  sendStateUpdate();
+  sendStateUpdate(roomId);
 };
 
-const startGame = () => {
+const startGame = (roomId: string) => {
+  const gameState = getGameState(roomId);
   const readyPlayers = gameState.players.filter((p) => p.isReady);
   // Need at least 2 players in the lobby to start
   if (
@@ -132,7 +143,7 @@ const startGame = () => {
   const activePlayers = gameState.players.filter((p) => !p.isStanding);
   if (activePlayers.length < 2) {
     // End game immediately if less than 2 players have coins to play
-    endGame();
+    endGame(roomId);
     return;
   }
 
@@ -150,10 +161,11 @@ const startGame = () => {
   });
 
   // Start betting instead of deciding directly
-  startBettingRound();
+  startBettingRound(roomId);
 };
 
-const checkAllDecided = () => {
+const checkAllDecided = (roomId: string) => {
+  const gameState = getGameState(roomId);
   if (gameState.status !== "deciding") return;
   const allDecided = gameState.players.every(
     (p) => p.isStanding || p.biddingAction !== "pending",
@@ -162,13 +174,13 @@ const checkAllDecided = () => {
     // Reveal public card and move to bidding
     const activePlayers = gameState.players.filter((p) => !p.isStanding);
     if (activePlayers.length === 0) {
-      endGame();
+      endGame(roomId);
       return;
     }
 
     // Draw public card
     if (gameState.deck.length === 0) {
-      endGame();
+      endGame(roomId);
       return;
     }
 
@@ -176,7 +188,7 @@ const checkAllDecided = () => {
 
     if (activePlayers.length === 1) {
       // Auto-assign to the only remaining active player
-      awardCard(activePlayers[0].id);
+      awardCard(roomId, activePlayers[0].id);
       return;
     }
 
@@ -187,11 +199,12 @@ const checkAllDecided = () => {
       p.rpsChoice = "pending";
     });
 
-    sendStateUpdate();
+    sendStateUpdate(roomId);
   }
 };
 
-const resolveBidding = () => {
+const resolveBidding = (roomId: string) => {
+  const gameState = getGameState(roomId);
   if (gameState.status !== "bidding") return;
   const activePlayers = gameState.players.filter((p) => !p.isStanding);
   const allBid = activePlayers.every((p) => p.biddingAction !== "pending");
@@ -201,7 +214,7 @@ const resolveBidding = () => {
 
     if (takers.length === 1) {
       // Only one wants it
-      awardCard(takers[0].id);
+      awardCard(roomId, takers[0].id);
     } else if (takers.length > 1) {
       // Multiple want it -> RPS
       gameState.status = "rps";
@@ -211,17 +224,18 @@ const resolveBidding = () => {
         .filter((p) => p.biddingAction !== "take")
         .forEach((p) => (p.rpsChoice = "pending"));
       // but maybe track who is in RPS. Let's just say takers play it.
-      sendStateUpdate();
+      sendStateUpdate(roomId);
     } else {
       // Nobody wants it -> RPS for Loser
       gameState.status = "rps";
       activePlayers.forEach((p) => (p.rpsChoice = "pending")); // Everyone plays RPS to find loser
-      sendStateUpdate();
+      sendStateUpdate(roomId);
     }
   }
 };
 
-const resolveRPS = () => {
+const resolveRPS = (roomId: string) => {
+  const gameState = getGameState(roomId);
   if (gameState.status !== "rps") return;
 
   // Find players involved in RPS
@@ -266,7 +280,7 @@ const resolveRPS = () => {
     }
 
     // Emit RPS result to show clients the choices
-    io.emit("rpsResult", {
+    io.to(roomId).emit("rpsResult", {
       choices: participants.map((p) => ({
         id: p.id,
         username: p.username,
@@ -285,22 +299,23 @@ const resolveRPS = () => {
     setTimeout(() => {
       if (isTie) {
         participants.forEach((p) => (p.rpsChoice = "pending"));
-        sendStateUpdate();
+        sendStateUpdate(roomId);
       } else {
         if (takers.length > 1) {
-          awardCard(resultWinners[0].id);
+          awardCard(roomId, resultWinners[0].id);
         } else {
-          awardCard(resultLosers[0].id);
+          awardCard(roomId, resultLosers[0].id);
         }
       }
     }, 3500);
   }
 };
 
-const awardCard = (playerId: string) => {
+const awardCard = (roomId: string, playerId: string) => {
+  const gameState = getGameState(roomId);
   gameState.status = "awarding";
   gameState.awardingInfo = { winnerId: playerId };
-  sendStateUpdate();
+  sendStateUpdate(roomId);
 
   setTimeout(() => {
     const player = gameState.players.find((p) => p.id === playerId);
@@ -325,14 +340,15 @@ const awardCard = (playerId: string) => {
     });
 
     if (gameState.players.every((p) => p.isStanding)) {
-      endGame();
+      endGame(roomId);
     } else {
-      startBettingRound();
+      startBettingRound(roomId);
     }
   }, 2500);
 };
 
-const endGame = () => {
+const endGame = (roomId: string) => {
+  const gameState = getGameState(roomId);
   gameState.status = "game_over";
 
   gameState.players.forEach((p) => {
@@ -364,7 +380,7 @@ const endGame = () => {
   }
 
   const winnerIds = new Set(winners.map((w) => w.id));
-  sendStateUpdate();
+  sendStateUpdate(roomId);
 
   const validScorePlayers = gameState.players
     .filter((p) => p.score <= 21 && p.score > 0)
@@ -375,7 +391,7 @@ const endGame = () => {
 
   const sortedPlayers = [...validScorePlayers, ...invalidScorePlayers];
 
-  io.emit("gameOver", {
+  io.to(roomId).emit("gameOver", {
     players: sortedPlayers.map((p) => ({
       id: p.id,
       username: p.username,
@@ -390,7 +406,13 @@ const endGame = () => {
 io.on("connection", (socket: Socket) => {
   console.log("User connected:", socket.id);
 
-  socket.on("join", (username: string) => {
+  socket.on("join", (data: { username: string; roomId: string }) => {
+    const { username, roomId } = data;
+    if (!roomId) return;
+    socket.join(roomId);
+    playerRooms.set(socket.id, roomId);
+    const gameState = getGameState(roomId);
+
     if (
       gameState.players.length >= MAX_PLAYERS ||
       gameState.status !== "waiting"
@@ -411,25 +433,31 @@ io.on("connection", (socket: Socket) => {
       currentRoundBet: 0,
       hasActed: false,
     });
-    sendStateUpdate();
+    sendStateUpdate(roomId);
   });
 
   socket.on("ready", () => {
+    const roomId = playerRooms.get(socket.id);
+    if (!roomId) return;
+    const gameState = getGameState(roomId);
     const player = gameState.players.find((p) => p.id === socket.id);
     if (player) {
       player.isReady = true;
-      sendStateUpdate();
+      sendStateUpdate(roomId);
 
       if (
         gameState.players.length >= 2 &&
         gameState.players.every((p) => p.isReady)
       ) {
-        startGame();
+        startGame(roomId);
       }
     }
   });
 
   socket.on("action", (data: { type: string; payload?: any }) => {
+    const roomId = playerRooms.get(socket.id);
+    if (!roomId) return;
+    const gameState = getGameState(roomId);
     const player = gameState.players.find((p) => p.id === socket.id);
     if (!player) return;
 
@@ -442,7 +470,6 @@ io.on("connection", (socket: Socket) => {
         const amountToCall = gameState.currentBet - player.currentRoundBet;
         const betAmount = parseInt(data.payload?.amount || 0);
 
-        // Forced to stand if can't even call the current bet
         if (player.coins < amountToCall) {
           player.isStanding = true;
         } else if (betAmount >= amountToCall && betAmount <= player.coins) {
@@ -456,7 +483,6 @@ io.on("connection", (socket: Socket) => {
           player.hasActed = true;
         }
 
-        // Check if betting round ends
         const stillActive = gameState.players.filter((p) => !p.isStanding);
         const allActed = stillActive.every(
           (p) => p.hasActed && p.currentRoundBet === gameState.currentBet,
@@ -466,11 +492,7 @@ io.on("connection", (socket: Socket) => {
         if (allActed || onlyOneLeft) {
           gameState.status = "deciding";
           gameState.bettingTurnId = null;
-          if (onlyOneLeft && stillActive.length === 1) {
-            // Give them back the uncalled diff if wanted, but simpler to just give pot later
-          }
         } else {
-          // Next player's turn
           let currentIndex = activePlayers.findIndex((p) => p.id === player.id);
           let nextPlayer = null;
           for (let i = 1; i <= activePlayers.length; i++) {
@@ -492,40 +514,47 @@ io.on("connection", (socket: Socket) => {
             gameState.bettingTurnId = null;
           }
         }
-        sendStateUpdate();
+        sendStateUpdate(roomId);
       }
     } else if (gameState.status === "deciding") {
       if (data.type === "stand" && player.score >= 16) {
         player.isStanding = true;
         player.biddingAction = "skip";
       } else if (data.type === "continue") {
-        player.biddingAction = "skip"; // temp marking as decided
+        player.biddingAction = "skip";
       }
-      checkAllDecided();
+      checkAllDecided(roomId);
     } else if (gameState.status === "bidding") {
       if (data.type === "take") {
         player.biddingAction = "take";
       } else if (data.type === "skip") {
         player.biddingAction = "skip";
       }
-      resolveBidding();
+      resolveBidding(roomId);
     } else if (gameState.status === "rps") {
       if (["rock", "paper", "scissors"].includes(data.type)) {
         player.rpsChoice = data.type as any;
-        sendStateUpdate();
-        resolveRPS();
+        sendStateUpdate(roomId);
+        resolveRPS(roomId);
       }
     }
   });
 
   socket.on("disconnect", () => {
     console.log("User disconnected:", socket.id);
+    const roomId = playerRooms.get(socket.id);
+    if (!roomId) return;
+
+    const gameState = getGameState(roomId);
     gameState.players = gameState.players.filter((p) => p.id !== socket.id);
+    playerRooms.delete(socket.id);
+
     // basic robust handling: if 0 players, reset
     if (gameState.players.length === 0) {
-      resetGame();
+      resetGame(roomId);
+      gameRooms.delete(roomId); // auto cleanup empty rooms
     } else {
-      sendStateUpdate();
+      sendStateUpdate(roomId);
     }
   });
 });

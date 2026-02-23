@@ -73,6 +73,8 @@ export default function Home() {
     null,
   );
   const [username, setUsername] = useState("");
+  const [roomIdInput, setRoomIdInput] = useState("");
+  const [joinedRoomId, setJoinedRoomId] = useState("");
   const [isJoined, setIsJoined] = useState(false);
   const [actionLoading, setActionLoading] = useState(false);
   const [rpsResult, setRpsResult] = useState<RpsResult | null>(null);
@@ -111,9 +113,18 @@ export default function Home() {
     };
   }, []);
 
-  const handleJoin = () => {
+  const handleJoin = (isCreate = false) => {
     if (socket && username.trim()) {
-      socket.emit("join", username);
+      const finalRoomId = isCreate
+        ? Math.floor(1000 + Math.random() * 9000).toString()
+        : roomIdInput.trim();
+
+      if (!finalRoomId) {
+        alert("Please enter a Room ID to join");
+        return;
+      }
+      setJoinedRoomId(finalRoomId);
+      socket.emit("join", { username, roomId: finalRoomId });
       setIsJoined(true);
     }
   };
@@ -168,23 +179,51 @@ export default function Home() {
             <div className="text-5xl mb-4">🃏</div>
             <h1 className="text-3xl font-bold text-amber-500">Greedy Jack</h1>
             <p className="text-slate-400 mt-2">
-              Enter your name to join the table
+              Enter your name and join or create a room
             </p>
           </div>
+
           <input
             type="text"
             placeholder="Username"
-            className="w-full p-4 rounded-xl mb-6 bg-slate-800 border border-slate-700 text-white font-semibold focus:outline-none focus:ring-2 focus:ring-amber-500 transition-all placeholder-slate-500"
+            className="w-full p-4 rounded-xl mb-4 bg-slate-800 border border-slate-700 text-white font-semibold focus:outline-none focus:ring-2 focus:ring-amber-500 transition-all placeholder-slate-500"
             value={username}
             onChange={(e) => setUsername(e.target.value)}
-            onKeyDown={(e) => e.key === "Enter" && handleJoin()}
           />
-          <button
-            onClick={handleJoin}
-            className="w-full bg-amber-600 hover:bg-amber-500 active:scale-95 text-slate-900 font-bold py-4 rounded-xl transition-all shadow-[0_4px_14px_0_rgba(217,119,6,0.39)]"
-          >
-            Join Table
-          </button>
+
+          <div className="flex flex-col gap-4 mt-4">
+            <div className="flex gap-2">
+              <input
+                type="text"
+                placeholder="Room ID"
+                className="flex-1 p-4 rounded-xl bg-slate-800 border border-slate-700 text-white font-semibold focus:outline-none focus:ring-2 focus:ring-amber-500 transition-all placeholder-slate-500"
+                value={roomIdInput}
+                onChange={(e) =>
+                  setRoomIdInput(e.target.value.replace(/\D/g, "").slice(0, 6))
+                }
+                onKeyDown={(e) => e.key === "Enter" && handleJoin(false)}
+              />
+              <button
+                onClick={() => handleJoin(false)}
+                className="bg-emerald-600 hover:bg-emerald-500 active:scale-95 text-white font-bold px-6 py-4 rounded-xl transition-all shadow-md"
+              >
+                Join
+              </button>
+            </div>
+
+            <div className="flex items-center gap-4 my-2">
+              <div className="h-px bg-slate-700 flex-1"></div>
+              <div className="text-slate-500 text-sm font-bold">OR</div>
+              <div className="h-px bg-slate-700 flex-1"></div>
+            </div>
+
+            <button
+              onClick={() => handleJoin(true)}
+              className="w-full bg-amber-600 hover:bg-amber-500 active:scale-95 text-slate-900 font-bold py-4 rounded-xl transition-all shadow-[0_4px_14px_0_rgba(217,119,6,0.39)]"
+            >
+              Create New Room
+            </button>
+          </div>
         </motion.div>
       </div>
     );
@@ -198,12 +237,28 @@ export default function Home() {
     <div className="min-h-screen bg-[#064E3B] bg-[radial-gradient(ellipse_at_center,_var(--tw-gradient-stops))] from-[#065f46] to-[#022c22] text-white p-4 pb-48 font-sans overflow-x-hidden">
       {/* HEADER */}
       <header className="flex justify-between items-center mb-8 p-4 bg-slate-900/60 backdrop-blur-md rounded-2xl shadow-lg border border-slate-700/50">
-        <h1 className="text-xl md:text-2xl font-bold">
-          Phase:{" "}
-          <span className="text-amber-500 animate-pulse">
-            {gameState?.status.toUpperCase()}
-          </span>
-        </h1>
+        <div>
+          <h1 className="text-xl md:text-2xl font-bold flex items-center gap-3">
+            Phase:{" "}
+            <span className="text-amber-500 animate-pulse">
+              {gameState?.status.toUpperCase()}
+            </span>
+            <span className="text-sm bg-slate-800 text-slate-300 px-3 py-1 rounded-full border border-slate-600 hidden md:block">
+              Room ID:{" "}
+              <span className="font-mono text-white text-lg">
+                {joinedRoomId}
+              </span>
+            </span>
+          </h1>
+          <div className="md:hidden mt-2">
+            <span className="text-sm bg-slate-800 text-slate-300 px-3 py-1 rounded-full border border-slate-600">
+              Room ID:{" "}
+              <span className="font-mono text-white font-bold">
+                {joinedRoomId}
+              </span>
+            </span>
+          </div>
+        </div>
         <div className="flex items-center gap-4">
           <div className="flex items-center gap-2 bg-amber-500/20 px-4 py-1.5 rounded-full border border-amber-500/50">
             <span className="text-amber-400 font-bold text-lg">
