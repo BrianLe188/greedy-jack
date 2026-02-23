@@ -29,6 +29,9 @@ let gameState: GameState = {
   currentTurn: null,
   roundTimer: null,
   awardingInfo: null,
+  pot: 0,
+  currentBet: 0,
+  bettingTurnId: null,
 };
 
 const MAX_PLAYERS = 4;
@@ -42,6 +45,9 @@ const resetGame = () => {
     currentTurn: null,
     roundTimer: null,
     awardingInfo: null,
+    pot: 0,
+    currentBet: 0,
+    bettingTurnId: null,
   };
   sendStateUpdate();
 };
@@ -59,6 +65,9 @@ const sendStateUpdate = () => {
     biddingAction: p.biddingAction,
     rpsChoice: p.rpsChoice === "pending" ? "pending" : "decided", // hide choice until resolution
     isReady: p.isReady,
+    coins: p.coins,
+    currentRoundBet: p.currentRoundBet,
+    hasActed: p.hasActed,
   }));
 
   const publicState = {
@@ -66,6 +75,9 @@ const sendStateUpdate = () => {
     publicCard: gameState.publicCard,
     awardingInfo: gameState.awardingInfo,
     players: sanitizedPlayers,
+    pot: gameState.pot,
+    currentBet: gameState.currentBet,
+    bettingTurnId: gameState.bettingTurnId,
   };
 
   io.emit("stateUpdate", publicState);
@@ -75,27 +87,70 @@ const sendStateUpdate = () => {
     io.to(p.id).emit("privateState", {
       hand: p.hand,
       score: p.score,
+      rpsChoice: p.rpsChoice,
     });
   });
 };
 
+const startBettingRound = () => {
+  const activePlayers = gameState.players.filter((p) => !p.isStanding);
+  if (activePlayers.length < 2) {
+    gameState.status = "deciding";
+    sendStateUpdate();
+    return;
+  }
+
+  gameState.status = "betting";
+  gameState.currentBet = 0;
+  gameState.bettingTurnId = activePlayers[0].id;
+
+  gameState.players.forEach((p) => {
+    if (!p.isStanding) {
+      p.currentRoundBet = 0;
+      p.hasActed = false;
+    }
+  });
+
+  sendStateUpdate();
+};
+
 const startGame = () => {
-  if (gameState.players.length < 2) return;
+  const readyPlayers = gameState.players.filter((p) => p.isReady);
+  // Need at least 2 players in the lobby to start
+  if (
+    gameState.players.length < 2 ||
+    readyPlayers.length !== gameState.players.length
+  )
+    return;
+
+  // Reset players state for the new round
+  gameState.players.forEach((p) => {
+    p.isStanding = p.coins <= 0;
+    p.isReady = false; // reset ready for next game
+  });
+
+  const activePlayers = gameState.players.filter((p) => !p.isStanding);
+  if (activePlayers.length < 2) {
+    // End game immediately if less than 2 players have coins to play
+    endGame();
+    return;
+  }
 
   gameState.status = "dealing";
   gameState.deck = createDeck();
+  gameState.publicCard = null;
+  gameState.awardingInfo = null;
+  gameState.pot = 0;
 
-  gameState.players.forEach((p) => {
+  activePlayers.forEach((p) => {
     p.hand = [gameState.deck.pop()!, gameState.deck.pop()!];
     p.score = calculateScore(p.hand);
-    p.isStanding = false;
     p.biddingAction = "pending";
     p.rpsChoice = "pending";
   });
 
-  // Transition directly to deciding phase
-  gameState.status = "deciding";
-  sendStateUpdate();
+  // Start betting instead of deciding directly
+  startBettingRound();
 };
 
 const checkAllDecided = () => {
@@ -260,26 +315,29 @@ const awardCard = (playerId: string) => {
 
     gameState.publicCard = null;
     gameState.awardingInfo = null;
-    gameState.status = "deciding";
 
     gameState.players.forEach((p) => {
       p.biddingAction = "pending";
       p.rpsChoice = "pending";
-      if (p.hand.length >= 5 || p.score > 21) {
-        p.isStanding = true;
+      if (p.hand.length >= 5 || p.score > 21 || p.coins <= 0) {
+        p.isStanding = true; // Also force stand if out of coins
       }
     });
 
     if (gameState.players.every((p) => p.isStanding)) {
       endGame();
     } else {
-      sendStateUpdate();
+      startBettingRound();
     }
   }, 2500);
 };
 
 const endGame = () => {
   gameState.status = "game_over";
+
+  gameState.players.forEach((p) => {
+    p.isReady = false;
+  });
 
   let validPlayers = gameState.players.filter(
     (p) => p.score <= 21 && p.score > 0,
@@ -297,16 +355,34 @@ const endGame = () => {
     winners = bustedPlayers.filter((p) => p.score === bestScore);
   }
 
+  if (winners.length > 0 && gameState.pot > 0) {
+    const winAmount = Math.floor(gameState.pot / winners.length);
+    winners.forEach((w) => {
+      w.coins += winAmount;
+    });
+    gameState.pot = 0;
+  }
+
   const winnerIds = new Set(winners.map((w) => w.id));
   sendStateUpdate();
 
+  const validScorePlayers = gameState.players
+    .filter((p) => p.score <= 21 && p.score > 0)
+    .sort((a, b) => b.score - a.score);
+  const invalidScorePlayers = gameState.players
+    .filter((p) => p.score > 21 || p.score === 0)
+    .sort((a, b) => a.score - b.score);
+
+  const sortedPlayers = [...validScorePlayers, ...invalidScorePlayers];
+
   io.emit("gameOver", {
-    players: gameState.players.map((p) => ({
+    players: sortedPlayers.map((p) => ({
       id: p.id,
       username: p.username,
       hand: p.hand,
       score: p.score,
       isWinner: winnerIds.has(p.id),
+      coins: p.coins,
     })),
   });
 };
@@ -331,6 +407,9 @@ io.on("connection", (socket: Socket) => {
       biddingAction: "pending",
       rpsChoice: "pending",
       isReady: false,
+      coins: 10000,
+      currentRoundBet: 0,
+      hasActed: false,
     });
     sendStateUpdate();
   });
@@ -354,7 +433,68 @@ io.on("connection", (socket: Socket) => {
     const player = gameState.players.find((p) => p.id === socket.id);
     if (!player) return;
 
-    if (gameState.status === "deciding") {
+    if (gameState.status === "betting") {
+      if (gameState.bettingTurnId !== player.id) return;
+
+      const activePlayers = gameState.players.filter((p) => !p.isStanding);
+
+      if (data.type === "bet") {
+        const amountToCall = gameState.currentBet - player.currentRoundBet;
+        const betAmount = parseInt(data.payload?.amount || 0);
+
+        // Forced to stand if can't even call the current bet
+        if (player.coins < amountToCall) {
+          player.isStanding = true;
+        } else if (betAmount >= amountToCall && betAmount <= player.coins) {
+          player.coins -= betAmount;
+          player.currentRoundBet += betAmount;
+          gameState.pot += betAmount;
+
+          if (player.currentRoundBet > gameState.currentBet) {
+            gameState.currentBet = player.currentRoundBet;
+          }
+          player.hasActed = true;
+        }
+
+        // Check if betting round ends
+        const stillActive = gameState.players.filter((p) => !p.isStanding);
+        const allActed = stillActive.every(
+          (p) => p.hasActed && p.currentRoundBet === gameState.currentBet,
+        );
+        const onlyOneLeft = stillActive.length === 1;
+
+        if (allActed || onlyOneLeft) {
+          gameState.status = "deciding";
+          gameState.bettingTurnId = null;
+          if (onlyOneLeft && stillActive.length === 1) {
+            // Give them back the uncalled diff if wanted, but simpler to just give pot later
+          }
+        } else {
+          // Next player's turn
+          let currentIndex = activePlayers.findIndex((p) => p.id === player.id);
+          let nextPlayer = null;
+          for (let i = 1; i <= activePlayers.length; i++) {
+            const possibleNext =
+              activePlayers[(currentIndex + i) % activePlayers.length];
+            if (
+              !possibleNext.isStanding &&
+              (!possibleNext.hasActed ||
+                possibleNext.currentRoundBet < gameState.currentBet)
+            ) {
+              nextPlayer = possibleNext;
+              break;
+            }
+          }
+          if (nextPlayer) {
+            gameState.bettingTurnId = nextPlayer.id;
+          } else {
+            gameState.status = "deciding";
+            gameState.bettingTurnId = null;
+          }
+        }
+        sendStateUpdate();
+      }
+    } else if (gameState.status === "deciding") {
       if (data.type === "stand" && player.score >= 16) {
         player.isStanding = true;
         player.biddingAction = "skip";
@@ -372,6 +512,7 @@ io.on("connection", (socket: Socket) => {
     } else if (gameState.status === "rps") {
       if (["rock", "paper", "scissors"].includes(data.type)) {
         player.rpsChoice = data.type as any;
+        sendStateUpdate();
         resolveRPS();
       }
     }

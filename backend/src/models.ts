@@ -29,11 +29,15 @@ export type PlayerState = {
   biddingAction: "pending" | "take" | "skip";
   rpsChoice: "pending" | "rock" | "paper" | "scissors";
   isReady: boolean;
+  coins: number;
+  currentRoundBet: number;
+  hasActed: boolean;
 };
 
 export type GameStatus =
   | "waiting"
   | "dealing"
+  | "betting"
   | "deciding"
   | "bidding"
   | "rps"
@@ -48,6 +52,9 @@ export interface GameState {
   currentTurn: string | null;
   roundTimer: number | null;
   awardingInfo?: { winnerId: string } | null;
+  pot: number;
+  currentBet: number;
+  bettingTurnId: string | null;
 }
 
 export const createDeck = (): Card[] => {
