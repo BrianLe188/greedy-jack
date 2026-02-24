@@ -48,7 +48,7 @@ export default function Home() {
   }, []);
 
   useEffect(() => {
-    const s = io("http://localhost:3001");
+    const s = io(process.env.NEXT_PUBLIC_SOCKET_URL || "http://localhost:3001");
     // eslint-disable-next-line react-hooks/set-state-in-effect
     setSocket(s);
 
