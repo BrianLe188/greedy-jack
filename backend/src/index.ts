@@ -540,6 +540,22 @@ io.on("connection", (socket: Socket) => {
     }
   });
 
+  socket.on("chatMessage", (msg: string) => {
+    const roomId = playerRooms.get(socket.id);
+    if (!roomId) return;
+    const gameState = getGameState(roomId);
+    const player = gameState.players.find((p) => p.id === socket.id);
+    if (player && msg.trim()) {
+      io.to(roomId).emit("chatMessage", {
+        id: Math.random().toString(36).substr(2, 9),
+        senderId: player.id,
+        senderName: player.username,
+        text: msg.trim(),
+        timestamp: Date.now(),
+      });
+    }
+  });
+
   socket.on("disconnect", () => {
     console.log("User disconnected:", socket.id);
     const roomId = playerRooms.get(socket.id);

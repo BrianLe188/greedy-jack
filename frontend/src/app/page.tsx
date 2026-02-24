@@ -3,11 +3,18 @@
 import { useEffect, useState, useMemo, useCallback } from "react";
 import { io, Socket } from "socket.io-client";
 import { motion, AnimatePresence } from "framer-motion";
-import { GameState, Card, GameOverResult, RpsResult } from "../types";
+import {
+  GameState,
+  Card,
+  GameOverResult,
+  RpsResult,
+  ChatMessage,
+} from "../types";
 import JoinScreen from "../components/JoinScreen";
 import OpponentCard from "../components/OpponentCard";
 import MyPlayerPanel from "../components/MyPlayerPanel";
 import PlayingCard from "../components/PlayingCard";
+import ChatBox from "../components/ChatBox";
 
 export default function Home() {
   const [socket, setSocket] = useState<Socket | null>(null);
@@ -28,6 +35,7 @@ export default function Home() {
   const [rpsResult, setRpsResult] = useState<RpsResult | null>(null);
   const [betInput, setBetInput] = useState<string>("0");
   const [showRules, setShowRules] = useState(false);
+  const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
 
   useEffect(() => {
     if (typeof window !== "undefined") {
@@ -66,6 +74,10 @@ export default function Home() {
     s.on("rpsResult", (result: RpsResult) => {
       setRpsResult(result);
       setTimeout(() => setRpsResult(null), 3500);
+    });
+
+    s.on("chatMessage", (msg: ChatMessage) => {
+      setChatMessages((prev) => [...prev, msg].slice(-50)); // Keep last 50 messages
     });
 
     return () => {
@@ -598,6 +610,14 @@ export default function Home() {
           </motion.div>
         )}
       </AnimatePresence>
+      {/* CHAT BOX FLOATING PANEL */}
+      {isJoined && (
+        <ChatBox
+          socket={socket}
+          messages={chatMessages}
+          myPlayerId={myPlayer?.id}
+        />
+      )}
     </div>
   );
 }

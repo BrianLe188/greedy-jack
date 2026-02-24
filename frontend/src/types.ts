@@ -54,3 +54,11 @@ export interface RpsResult {
   isTie: boolean;
   winnerId: string | null;
 }
+
+export interface ChatMessage {
+  id: string;
+  senderId: string;
+  senderName: string;
+  text: string;
+  timestamp: number;
+}
